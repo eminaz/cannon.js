@@ -33,16 +33,44 @@
     <script src="../libs/Three.js"></script>
     <script src="../libs/Detector.js"></script>
     <script src="../libs/TrackballControls.js"></script>
+    <script src="../build/cannon.js"></script>
 
-    <!-- Worker script, will be run in separate thread -->
-    <script id="worker1" type="javascript/worker">
+    <script>
+        // Parameters
+        var dt = 1/60, N=100;
+
+        // Data arrays. Contains all our kinematic data we need for rendering.
+        positions = new Float32Array(N*3);
+        quaternions = new Float32Array(N*4);
+
         var world;
-        self.onmessage = function(e) {
 
-            if (e.data.cannonUrl && !world) {
-                // Load cannon.js
-                importScripts(e.data.cannonUrl);
+        var sendTime; // Time when we sent last message
+        function updatePhysics(e) {
+            // Update rendering meshes
+            for(var i=0; i!==meshes.length; i++){
+                meshes[i].position.set( positions[3*i+0],
+                                        positions[3*i+1],
+                                        positions[3*i+2] );
+                meshes[i].quaternion.set(quaternions[4*i+0],
+                                         quaternions[4*i+1],
+                                         quaternions[4*i+2],
+                                         quaternions[4*i+3]);
+            }
 
+            // If the worker was faster than the time step (dt seconds), we want to delay the next timestep
+            var delay = dt * 1000 - (Date.now()-sendTime);
+            console.log('Date.now()-sendTime ', Date.now()-sendTime, delay);
+            if(delay < 0){
+                delay = 0;
+            }
+            sendDataToWorker();
+            setTimeout(updatePhysics,delay);
+        }
+
+        function sendDataToWorker() {
+            sendTime = Date.now();
+            if (!world) {
                 // Init physics
                 world = new CANNON.World();
                 world.broadphase = new CANNON.NaiveBroadphase();
@@ -58,7 +86,7 @@
 
                 // Create N cubes
                 var shape = new CANNON.Box(new CANNON.Vec3(0.5,0.5,0.5));
-                for(var i=0; i!==e.data.N; i++){
+                for(var i=0; i!==N; i++){
                     var body = new CANNON.Body({ mass: 1 });
                     body.addShape(shape);
                     body.position.set(Math.random()-0.5,2.5*i+0.5,Math.random()-0.5);
@@ -67,11 +95,9 @@
             }
 
             // Step the world
-            world.step(e.data.dt);
+            world.step(dt);
 
             // Copy over the data to the buffers
-            var positions = e.data.positions;
-            var quaternions = e.data.quaternions;
             for(var i=0; i!==world.bodies.length; i++){
                 var b = world.bodies[i],
                     p = b.position,
@@ -85,67 +111,6 @@
                 quaternions[4*i + 3] = q.w;
             }
 
-            // Send data back to the main thread
-            self.postMessage({
-                positions:positions,
-                quaternions:quaternions
-            }, [positions.buffer,
-                quaternions.buffer]);
-        };
-    </script>
-
-    <script>
-        // Parameters
-        var dt = 1/60, N=100;
-
-        // Data arrays. Contains all our kinematic data we need for rendering.
-        var positions = new Float32Array(N*3);
-        var quaternions = new Float32Array(N*4);
-
-        // Create a blob for the inline worker code
-        // var blob = new Blob([document.querySelector('#worker1').textContent],{type:'text/javascript'});
-        var blob = new Blob([document.querySelector('#worker1').textContent],{type:'text/javascript'});
-
-        // Create worker
-        var worker = new Worker(window.URL.createObjectURL(blob));
-        worker.postMessage = worker.webkitPostMessage || worker.postMessage;
-
-        var sendTime; // Time when we sent last message
-        worker.onmessage = function(e) {
-
-            // Get fresh data from the worker
-            positions = e.data.positions;
-            quaternions = e.data.quaternions;
-
-            // Update rendering meshes
-            for(var i=0; i!==meshes.length; i++){
-                meshes[i].position.set( positions[3*i+0],
-                                        positions[3*i+1],
-                                        positions[3*i+2] );
-                meshes[i].quaternion.set(quaternions[4*i+0],
-                                         quaternions[4*i+1],
-                                         quaternions[4*i+2],
-                                         quaternions[4*i+3]);
-            }
-
-            // If the worker was faster than the time step (dt seconds), we want to delay the next timestep
-            var delay = dt * 1000 - (Date.now()-sendTime);
-            console.log('Date.now()-sendTime ', Date.now()-sendTime);
-            if(delay < 0){
-                delay = 0;
-            }
-            setTimeout(sendDataToWorker,delay);
-        }
-
-        function sendDataToWorker(){
-            sendTime = Date.now();
-            worker.postMessage({
-                N : N,
-                dt : dt,
-                cannonUrl : document.location.href.replace(/\/[^/]*$/,"/") + "../build/cannon.js",
-                positions : positions,
-                quaternions : quaternions
-            },[positions.buffer, quaternions.buffer]);
         }
 
 
@@ -263,7 +228,7 @@
         }
 
         // Start the worker!
-        sendDataToWorker();
+        updatePhysics();
 
      </script>
 </body>
